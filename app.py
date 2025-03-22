@@ -12,21 +12,72 @@ from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, Union, Tuple
 
-# Third party imports
-# import gradio as gr
-import numpy as np
-import requests
-import torch
-import yaml
-from moviepy.editor import VideoFileClip
+try:
+    # Third party imports
+    # import gradio as gr
+    import numpy as np
+    import requests
+    import torch
+    import yaml
+    from moviepy.editor import VideoFileClip
 
-# Local application imports
-# from .base_interface import BaseInterface
-import whisperx  # Whisper 대신 WhisperX로 수정
-import gc  # 메모리 관리를 위한 가비지 컬렉션 import
-from typing import List
+    # Local application imports
+    # from .base_interface import BaseInterface
+    import whisperx  # Whisper 대신 WhisperX로 수정
+    import gc  # 메모리 관리를 위한 가비지 컬렉션 import
+    from typing import List
+    
+    # 라이브러리 버전 출력
+    print(f"NumPy version: {np.__version__}")
+    print(f"PyTorch version: {torch.__version__}")
+    try:
+        print(f"WhisperX version: {whisperx.__version__}")
+    except AttributeError:
+        print("WhisperX version information not available")
+    
+    # 모듈 구조와 버전 호환성 체크
+    WHISPERX_COMPATIBLE = True
+    
+except ImportError as e:
+    print(f"Import Error: {e}")
+    print("필요한 라이브러리가 설치되지 않았습니다. colab_setup.py를 실행해 주세요.")
+    WHISPERX_COMPATIBLE = False
+    raise SystemExit(1)
+except Exception as e:
+    print(f"오류 발생: {e}")
+    print("라이브러리 로드 중 문제가 발생했습니다. colab_setup.py를 다시 실행해 주세요.")
+    WHISPERX_COMPATIBLE = False
+    raise SystemExit(1)
 
 DEFAULT_MODEL_SIZE = "large-v2"
+
+# 모듈 구조와 버전 체크
+def check_whisperx_compatibility():
+    """WhisperX의 호환성을 확인합니다."""
+    try:
+        # 기본 기능 테스트
+        has_load_model = hasattr(whisperx, 'load_model')
+        has_diarization = hasattr(whisperx, 'DiarizationPipeline')
+        has_align = hasattr(whisperx, 'align')
+        
+        if not (has_load_model and has_diarization and has_align):
+            missing = []
+            if not has_load_model: missing.append('load_model')
+            if not has_diarization: missing.append('DiarizationPipeline')
+            if not has_align: missing.append('align')
+            print(f"WhisperX에 필요한 기능이 누락되었습니다: {', '.join(missing)}")
+            return False
+            
+        print("WhisperX 호환성 확인 완료")
+        return True
+    except Exception as e:
+        print(f"WhisperX 호환성 확인 중 오류 발생: {e}")
+        return False
+
+# 호환성 체크 실행
+whisperx_compatible = check_whisperx_compatibility()
+if not whisperx_compatible:
+    print("WhisperX가 올바르게 설치되지 않았습니다. colab_setup.py를 다시 실행해주세요.")
 
 
 class BaseInterface:
@@ -49,28 +100,28 @@ class BaseInterface:
 
 class WhisperInference(BaseInterface):
     def __init__(self):
+        """
+        WhisperInference 클래스 초기화
+        """
         super().__init__()
-        self.current_model_size = "large-v2"
         self.model = None
-        self.align_model = None
         self.diarize_model = None
-        # WhisperX는 모델 목록을 직접 제공하지 않으므로 필요한 모델 목록 정의
-        self.available_models = ["tiny", "base", "small", "medium", "large-v1", "large-v2", "large-v3"]
-        self.available_langs = ["en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl", "ar", "sv", "it", "id", "hi", "fi", "vi", "uk", "el", "ms", "cs", "ro", "da", "hu", "ta", "no", "th", "ur", "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa", "lv", "bn", "sr", "az", "sl", "kn", "et", "mk", "br", "eu", "is", "hy", "ne", "mn", "bs", "kk", "sq", "sw", "gl", "mr", "pa", "si", "km", "sn", "yo", "so", "af", "oc", "ka", "be", "tg", "sd", "gu", "am", "yi", "lo", "uz", "fo", "ht", "ps", "tk", "nn", "mt", "sa", "lb", "my", "bo", "tl", "mg", "as", "tt", "ln", "ha", "ba", "jw", "su"]
-        # CUDA 버전 체크 및 device 설정
+        self.current_model_size = None
+        self.current_compute_type = None
+        self.use_diarization = False  # 디폴트는 화자 분리 사용 안 함
+        
+        # 시스템 리소스 체크 및 설정
         if torch.cuda.is_available():
-            cuda_version = torch.version.cuda
-            print(f"CUDA version: {cuda_version}")
             self.device = "cuda"
+            # CUDA 메모리 정보 출력
+            try:
+                print(f"CUDA 사용 가능: {torch.cuda.get_device_name(0)}")
+                print(f"CUDA 사용 가능 메모리: {torch.cuda.get_device_properties(0).total_memory / (1024**3):.2f} GB")
+            except Exception as e:
+                print(f"CUDA 정보 확인 중 오류: {e}")
         else:
             self.device = "cpu"
-        print(f"Using device: {self.device}")
-        
-        self.available_compute_types = ["float16", "float32"]
-        self.current_compute_type = "float16" if self.device == "cuda" else "float32"
-        self.default_beam_size = 1
-        
-        self.use_diarization = False  # 화자 분리 기능 활성화 여부
+            print("CUDA 사용 불가. CPU 모드로 실행합니다.")
 
     @staticmethod
     def convert_video_to_audio(input_video_path, output_audio_path, bitrate="64k"):
@@ -369,6 +420,7 @@ class WhisperInference(BaseInterface):
                    ) -> Tuple[list[dict], float]:
 
         start_time = time.time()
+        print("Starting transcription...")
 
         if lang == "Automatic Detection":
             lang = None
@@ -377,77 +429,146 @@ class WhisperInference(BaseInterface):
         elif lang == "Korean" or lang == "korean":
             lang = "ko"
         
-        print(f'lang = {lang}')
+        print(f'Language setting: {lang}')
 
-        # WhisperX 방식으로 트랜스크립션 실행
-        if compute_type == "float16":
-            compute_type_param = "float16"
-        else:
-            compute_type_param = "float32"
-            
-        # 모델을 사용해 트랜스크립션 수행
-        result = self.model.transcribe(
-            audio=audio,
-            language=lang,
-            batch_size=16,  # 배치 사이즈 설정
-            beam_size=beam_size,
-            word_timestamps=True  # 단어 레벨 타임스탬프 활성화
-        )
-        
-        # 언어 감지 결과 사용
-        detected_language = result.get("language", "en")
-        
         try:
-            # 단어 정렬 수행
-            align_model, align_metadata = whisperx.load_align_model(
-                language_code=detected_language,
-                device=self.device
-            )
-            
-            # 정렬된 결과를 얻습니다
-            result = whisperx.align(
-                result["segments"], 
-                align_model, 
-                align_metadata, 
-                audio, 
-                self.device,
-                return_char_alignments=False
-            )
-            
-            # 화자 분리 기능 사용
-            if self.use_diarization:
+            # 오디오가 문자열(파일 경로)인 경우 로드
+            if isinstance(audio, str):
                 try:
-                    if not self.diarize_model:
-                        self.diarize_model = whisperx.DiarizationPipeline(
-                            device=self.device
-                        )
-                    
-                    # 화자 분리 수행
-                    diarize_segments = self.diarize_model(audio)
-                    
-                    # 화자 정보를 세그먼트에 할당
-                    result = whisperx.assign_word_speakers(diarize_segments, result)
+                    audio = whisperx.load_audio(audio)
+                    print(f"Audio loaded from file: shape={audio.shape}, min={audio.min()}, max={audio.max()}")
                 except Exception as e:
-                    print(f"화자 분리 중 오류 발생: {str(e)}")
-                    # 화자 분리에 실패해도 계속 진행
-        
+                    print(f"Error loading audio from file: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    raise Exception(f"오디오 파일 로드 실패: {e}")
+            
+            # WhisperX 트랜스크립션 설정
+            if compute_type == "float16":
+                compute_type_param = "float16"
+            else:
+                compute_type_param = "float32"
+                
+            print(f"Running transcription with model: {self.current_model_size}, compute_type: {compute_type_param}")
+            
+            # 트랜스크립션 실행
+            try:
+                # 여러 API 호출 방식 시도
+                try:
+                    # 기본 API 호출 시도
+                    result = self.model.transcribe(
+                        audio=audio,
+                        language=lang,
+                        batch_size=8,
+                        beam_size=beam_size,
+                        word_timestamps=True
+                    )
+                    print(f"Transcription completed: {len(result.get('segments', []))} segments")
+                except (TypeError, AttributeError, ValueError) as api_error:
+                    print(f"기본 API 호출 실패: {api_error}, 대체 방식 시도...")
+                    # 대체 API 호출 시도
+                    result = self.model.transcribe(
+                        audio,
+                        language=lang,
+                        beam_size=beam_size
+                    )
+                    print(f"대체 API로 트랜스크립션 완료: {len(result.get('segments', []))} segments")
+                
+                # 언어 감지 결과
+                detected_language = result.get("language", "en")
+                print(f"Detected language: {detected_language}")
+                
+                # 단어 정렬 수행
+                try:
+                    print("단어 정렬 실행 중...")
+                    align_model, align_metadata = whisperx.load_align_model(
+                        language_code=detected_language,
+                        device=self.device
+                    )
+                    
+                    # 정렬 실행
+                    result = whisperx.align(
+                        result["segments"], 
+                        align_model, 
+                        align_metadata, 
+                        audio, 
+                        self.device,
+                        return_char_alignments=False
+                    )
+                    print("단어 정렬 완료")
+                    
+                    # 화자 분리 기능 (사용 설정된 경우)
+                    if self.use_diarization:
+                        try:
+                            print("화자 분리 실행 중...")
+                            if self.diarize_model is None:
+                                print("화자 분리 모델 초기화...")
+                                self.diarize_model = whisperx.DiarizationPipeline(
+                                    device=self.device
+                                )
+                            
+                            # 화자 분리 수행
+                            diarize_segments = self.diarize_model(audio)
+                            
+                            # 화자 정보 할당
+                            try:
+                                result = whisperx.assign_word_speakers(diarize_segments, result)
+                                speakers = set([s.get('speaker', '') for s in result['segments'] if 'speaker' in s])
+                                print(f"화자 분리 완료: {len(speakers)}명의 화자 감지됨")
+                            except Exception as e:
+                                print(f"화자 정보 할당 중 오류: {str(e)}")
+                                import traceback
+                                traceback.print_exc()
+                        except Exception as e:
+                            print(f"화자 분리 중 오류: {str(e)}")
+                            import traceback
+                            traceback.print_exc()
+                    
+                except Exception as e:
+                    print(f"단어 정렬 중 오류: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                    # 정렬 실패시 원본 세그먼트 사용
+                    if "segments" not in result:
+                        print("세그먼트 정보 없음, 빈 리스트 생성")
+                        result["segments"] = []
+                
+                # 결과 세그먼트 변환
+                segments_result = []
+                for segment in result.get("segments", []):
+                    segment_data = {
+                        "start": segment["start"],
+                        "end": segment["end"],
+                        "text": segment.get("text", ""),
+                    }
+                    
+                    # 화자 정보 추가 (있는 경우)
+                    if self.use_diarization and "speaker" in segment:
+                        segment_data["speaker"] = segment["speaker"]
+                    
+                    segments_result.append(segment_data)
+                
+                elapsed_time = time.time() - start_time
+                
+                if not segments_result:
+                    print("경고: 트랜스크립션에서 세그먼트가 생성되지 않았습니다")
+                else:
+                    print(f"{len(segments_result)}개의 세그먼트 처리 완료 (소요 시간: {elapsed_time:.2f}초)")
+                    
+                return segments_result, elapsed_time
+                
+            except Exception as e:
+                print(f"트랜스크립션 오류: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                raise Exception(f"음성 인식 중 오류가 발생했습니다: {str(e)}")
+                
         except Exception as e:
-            print(f"정렬 중 오류 발생: {str(e)}")
-            # 정렬에 실패해도 원본 세그먼트 사용
-        
-        # 세그먼트 추출 및 형식 변환
-        segments_result = []
-        for segment in result.get("segments", []):
-            segments_result.append({
-                "start": segment["start"],
-                "end": segment["end"],
-                "text": segment.get("text", ""),
-                # 화자 정보가 있다면 추가
-                "speaker": segment.get("speaker", "SPEAKER_00") if self.use_diarization else None
-            })
-        
-        elapsed_time = time.time() - start_time
-        return segments_result, elapsed_time
+            print(f"전체 트랜스크립션 처리 오류: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            # 오류 발생 시 빈 결과 반환
+            return [], time.time() - start_time
 
     def update_model_if_needed(self,
                                model_size: str,
@@ -468,25 +589,65 @@ class WhisperInference(BaseInterface):
             
             self.current_model_size = model_size
             try:
-                # WhisperX 모델 로드 방식
-                self.model = whisperx.load_model(
-                    name=model_size,
-                    device=self.device,
-                    compute_type=compute_type,
-                    language=None,  # Auto-detect language
-                    download_root=os.path.join("models", "Whisper")
-                )
-                print(f"Successfully loaded {model_size} model on {self.device}")
+                print(f"Loading WhisperX model: {model_size} with compute_type: {compute_type}")
+                
+                # WhisperX 모델 로드 다양한 API 버전을 시도하기
+                for load_attempt in range(3):
+                    try:
+                        if load_attempt == 0:
+                            # 1. 기본 위치 인자 방식 (최신 버전)
+                            self.model = whisperx.load_model(
+                                model_size,  # 모델 크기
+                                self.device,  # 장치
+                                compute_type=compute_type
+                            )
+                            print("모델 로드 성공 (위치 인자 방식)")
+                            break
+                        elif load_attempt == 1:
+                            # 2. 키워드 인자 방식 (일부 버전)
+                            self.model = whisperx.load_model(
+                                model=model_size,
+                                device=self.device,
+                                compute_type=compute_type
+                            )
+                            print("모델 로드 성공 (model 키워드 인자 방식)")
+                            break
+                        else:
+                            # 3. name 키워드 방식 (이전 버전)
+                            self.model = whisperx.load_model(
+                                name=model_size,
+                                device=self.device,
+                                compute_type=compute_type
+                            )
+                            print("모델 로드 성공 (name 키워드 인자 방식)")
+                            break
+                    except (TypeError, ValueError, AttributeError) as e:
+                        print(f"모델 로드 시도 {load_attempt+1} 실패: {e}")
+                        if load_attempt == 2:
+                            raise Exception("모든 모델 로드 방식이 실패했습니다.")
+                
+                # 모델 로드 성공 정보 출력
+                print(f"모델 {model_size} 로드 완료 ({self.device} 사용)")
+                
+                # 메모리 정보 출력 (CUDA 사용 시)
+                if torch.cuda.is_available():
+                    allocated = torch.cuda.memory_allocated() / (1024 ** 3)
+                    print(f"GPU 메모리 사용량: {allocated:.2f} GB")
+                
             except Exception as e:
-                print(f"Error loading model: {str(e)}")
+                print(f"모델 로드 오류: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                print("모델 로드에 실패했습니다. colab_setup.py를 다시 실행해보세요.")
                 raise
 
     def generate_srt_string(self, subtitles):
         """Takes a list of subtitle dictionaries and turns it into an SRT formatted string."""
         srt_entries = []
         for subtitle in subtitles:
-            # 화자 정보가 있으면 자막에 추가
             text = subtitle['sentence']
+            
+            # 자막 딕셔너리에 speaker 키가 있고, self.use_diarization이 활성화된 경우에만 화자 표시
             if self.use_diarization and 'speaker' in subtitle and subtitle['speaker']:
                 text = f"[{subtitle['speaker']}] {text}"
             
@@ -692,9 +853,15 @@ def get_srt(segments):
     for i, segment in enumerate(segments):
         output += f"{i + 1}\n"
         output += f"{timeformat_srt(segment['start'])} --> {timeformat_srt(segment['end'])}\n"
-        if segment['text'].startswith(' '):
-            segment['text'] = segment['text'][1:]
-        output += f"{segment['text']}\n\n"
+        text = segment['text']
+        if text.startswith(' '):
+            text = text[1:]
+        
+        # 화자 정보가 있으면 추가
+        if 'speaker' in segment and segment['speaker']:
+            text = f"[{segment['speaker']}] {text}"
+            
+        output += f"{text}\n\n"
     return output
 
 
@@ -703,18 +870,30 @@ def get_vtt(segments):
     for i, segment in enumerate(segments):
         output += f"{i + 1}\n"
         output += f"{timeformat_vtt(segment['start'])} --> {timeformat_vtt(segment['end'])}\n"
-        if segment['text'].startswith(' '):
-            segment['text'] = segment['text'][1:]
-        output += f"{segment['text']}\n\n"
+        text = segment['text']
+        if text.startswith(' '):
+            text = text[1:]
+            
+        # 화자 정보가 있으면 추가
+        if 'speaker' in segment and segment['speaker']:
+            text = f"[{segment['speaker']}] {text}"
+            
+        output += f"{text}\n\n"
     return output
 
 
 def get_txt(segments):
     output = ""
     for i, segment in enumerate(segments):
-        if segment['text'].startswith(' '):
-            segment['text'] = segment['text'][1:]
-        output += f"{segment['text']}\n"
+        text = segment['text']
+        if text.startswith(' '):
+            text = text[1:]
+            
+        # 화자 정보가 있으면 추가
+        if 'speaker' in segment and segment['speaker']:
+            text = f"[{segment['speaker']}] {text}"
+            
+        output += f"{text}\n"
     return output
 
 
@@ -736,25 +915,41 @@ def convert_to_seconds(timestamp_str):
 
 def parse_srt_content(srt_data):
     """Reads SRT file and returns as dict"""
-    # Remove impurity
-    srt_data = srt_data[srt_data.index(re.search("\d+\n\d{2}:\d{2}:\d{2},\d{3}", srt_data).group()):]
-
-    data = []
-    blocks = srt_data.split('\n\n')
-
-    for block in blocks:
-        if block.strip() != '':
-            lines = block.strip().split('\n')
-            index = lines[0]
-            timestamp = lines[1]
-            sentence = ' '.join(lines[2:])
-
-            data.append({
-                "index": index,
-                "timestamp": timestamp,
-                "sentence": sentence
-            })
-    return data
+    # NoneType 오류 방지
+    if not isinstance(srt_data, str) or not srt_data.strip():
+        print("주의: 자막 내용이 비어있거나 유효하지 않습니다")
+        return []
+    
+    try:    
+        # 적절한 SRT 형식 확인
+        srt_match = re.search(r"\d+\n\d{2}:\d{2}:\d{2},\d{3}", srt_data)
+        if not srt_match:
+            print("주의: SRT 포맷을 찾을 수 없습니다")
+            return []
+        
+        # 유효한 부분만 추출
+        srt_data = srt_data[srt_data.index(srt_match.group()):]
+        
+        data = []
+        blocks = srt_data.split('\n\n')
+        
+        for block in blocks:
+            if block.strip() != '':
+                lines = block.strip().split('\n')
+                if len(lines) >= 3:  # 유효한 자막 블록인지 확인
+                    index = lines[0]
+                    timestamp = lines[1]
+                    sentence = ' '.join(lines[2:])
+                    
+                    data.append({
+                        "index": index,
+                        "timestamp": timestamp,
+                        "sentence": sentence
+                    })
+        return data
+    except Exception as e:
+        print(f"자막 파싱 중 오류: {e}")
+        return []
 
 
 def parse_srt(file_path):
@@ -968,7 +1163,7 @@ def subtitle_translation(srt_dir="/content/drive/MyDrive/outputs"):
         print("output_dir: ", output_dir)
         print("file_name: ", file_name)
 
-        d = parse_srt(fname)
+        d = parse_srt_content(fname)
 
         processed_list = process_text_in_batches(d, 45)
 
