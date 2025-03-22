@@ -79,12 +79,30 @@ def setup_environment():
         # 설치 간 간격 두기 (충돌 방지)
         time.sleep(2)
         
-        # WhisperX 설치 (특정 커밋으로 고정)
+        # WhisperX 설치 방법 수정
         print("Installing WhisperX...")
-        os.system("pip install git+https://github.com/m-bain/whisperX.git@e9c507ce5dce5a08aa8c98d4cc15b3e89dd5e417")
+        # 1. 기존 설치 확실히 제거
+        os.system("pip uninstall -y whisperx")
         
-        # 설치 확인
-        time.sleep(3)  # 설치 완료를 기다림
+        # 2. 저장소 직접 클론
+        os.system("git clone https://github.com/m-bain/whisperX.git ./whisperx_temp")
+        os.chdir("./whisperx_temp")
+        
+        # 3. 직접 설치
+        os.system("pip install -e .")
+        os.chdir("..")
+        
+        # 설치 확인을 위한 대기
+        time.sleep(5)
+        
+        # 패키지 설치 목록 확인
+        print("Checking installed packages...")
+        os.system("pip list | grep whisperx")
+        os.system("pip list | grep numpy")
+        os.system("pip list | grep torch")
+        
+        # Python 경로 출력
+        print(f"Python path: {sys.path}")
         
         try:
             import numpy as np
@@ -108,7 +126,28 @@ def setup_environment():
             return True
         except ImportError as e:
             print(f"Error importing packages: {e}")
-            return False
+            
+            # 추가 디버깅 정보
+            print("\n디버깅 정보:")
+            print("1. whisperx 패키지 위치 확인:")
+            os.system("find /usr -name whisperx")
+            os.system("find /content -name whisperx")
+            
+            print("\n2. PYTHONPATH 확인:")
+            print(os.environ.get('PYTHONPATH', '설정되지 않음'))
+            
+            # 마지막 시도: 직접 경로 추가
+            print("\n3. whisperx 소스 직접 복사:")
+            os.system("cp -r ./whisperx_temp/whisperx .")
+            sys.path.append(os.getcwd())
+            
+            try:
+                import whisperx
+                print("마지막 방법으로 whisperx 임포트 성공!")
+                return True
+            except ImportError as e2:
+                print(f"최종 임포트 실패: {e2}")
+                return False
     except Exception as e:
         print(f"Setup error: {e}")
         return False
