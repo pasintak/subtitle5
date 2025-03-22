@@ -1,0 +1,5 @@
+temp_folder: "/content/drive/MyDrive/inputs/temp" # The path to the temporary directory
+max_duration: 7200.0 # The maximum duration of each audio chunk in seconds
+max_file_size: 104857600.0 # The maximum file size of each audio chunk in bytes
+my_drive : "/content/drive/MyDrive"
+my_drive_outputs : "/content/drive/MyDrive/outputs"

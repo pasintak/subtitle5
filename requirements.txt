@@ -1,0 +1,11 @@
+openai-whisper
+faster-whisper
+transformers
+gradio==3.37.0
+pytube
+moviepy
+pyyaml
+git+https://github.com/m-bain/whisperX.git
+torchaudio
+pyannote.audio
+setuptools-rust
